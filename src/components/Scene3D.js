@@ -6,6 +6,59 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass';
 import { Water } from 'three/examples/jsm/objects/Water';
 
+// Custom tent mask shader
+const TentMaskShader = {
+  uniforms: {
+    'tDiffuse': { value: null },
+    'uAspect': { value: 1.0 },
+    'uTime': { value: 0.0 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uAspect;
+    uniform float uTime;
+    varying vec2 vUv;
+
+    void main() {
+      vec2 uv = vUv;
+      
+      // Convert to centered coordinates
+      vec2 center = vec2(0.5, 0.5);
+      vec2 pos = (uv - center) * vec2(uAspect, 1.0);
+      
+      // Create tent shape
+      float tentShape = 1.0 - smoothstep(0.0, 0.1, 
+        length(pos * vec2(0.7, 1.2)) - 0.4 + 
+        sin(atan(pos.y, pos.x) * 6.0 + uTime) * 0.02
+      );
+      
+      // Add fabric texture
+      float fabric = sin(pos.x * 100.0) * sin(pos.y * 100.0) * 0.02;
+      
+      // Get scene color
+      vec4 sceneColor = texture2D(tDiffuse, uv);
+      
+      // Darken edges
+      vec3 tentColor = mix(vec3(0.1, 0.08, 0.06), vec3(0.4, 0.35, 0.3), 
+        smoothstep(0.4, 0.8, tentShape + fabric)
+      );
+      
+      // Mix scene with tent edges
+      gl_FragColor = vec4(
+        mix(tentColor, sceneColor.rgb, smoothstep(0.4, 0.8, tentShape)),
+        1.0
+      );
+    }
+  `
+};
+
 // Custom voxel shader
 const VoxelShader = {
   uniforms: {
@@ -37,23 +90,25 @@ const VoxelShader = {
 export class Scene3D {
   constructor(container) {
     this.container = container;
-    this.scene = new THREE.Scene();
     
-    // Setup camera with better positioning
+    // Create two scenes: one for the environment and one for the tent
+    this.sceneEnv = new THREE.Scene();
+    this.sceneTent = new THREE.Scene();
+    
+    // Setup camera with better positioning for inside-tent view
     this.camera = new THREE.PerspectiveCamera(
-      65, // Wider FOV for better immersion
+      75, // Wider FOV for tent view
       container.clientWidth / container.clientHeight,
       0.1,
       1000
     );
-    this.camera.position.z = 2;
+    this.camera.position.z = 0; // Inside tent
     this.camera.position.y = 1.6; // Eye level
     this.camera.lookAt(0, 1.6, -10);
     
     // Setup renderer with improved settings
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
-      alpha: true,
       logarithmicDepthBuffer: true
     });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
@@ -65,28 +120,30 @@ export class Scene3D {
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     container.appendChild(this.renderer.domElement);
     
-    // Setup post-processing with enhanced bloom
+    // Setup post-processing
     this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
     
+    // Render environment first
+    const renderPassEnv = new RenderPass(this.sceneEnv, this.camera);
+    this.composer.addPass(renderPassEnv);
+    
+    // Add bloom for environment
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(container.clientWidth, container.clientHeight),
-      0.8, // Stronger bloom
-      0.3, // Smaller radius
-      0.9 // Higher threshold
+      0.8,
+      0.3,
+      0.9
     );
     this.composer.addPass(bloomPass);
     
-    // Add voxel effect pass
-    this.voxelPass = new ShaderPass(VoxelShader);
-    this.voxelPass.uniforms.resolution.value.set(container.clientWidth, container.clientHeight);
-    this.voxelPass.enabled = false;
-    this.composer.addPass(this.voxelPass);
+    // Add tent mask as final layer
+    this.tentMaskPass = new ShaderPass(TentMaskShader);
+    this.tentMaskPass.uniforms.uAspect.value = container.clientWidth / container.clientHeight;
+    this.composer.addPass(this.tentMaskPass);
     
     // Setup scene elements
     this.setupLights();
     this.setupEnvironment();
-    this.setupTentMask();
     this.setupCampfire();
     
     // Animation
@@ -112,28 +169,28 @@ export class Scene3D {
     this.sunLight.shadow.camera.bottom = -10;
     this.sunLight.shadow.bias = -0.0001;
     this.sunLight.shadow.normalBias = 0.02;
-    this.scene.add(this.sunLight);
+    this.sceneEnv.add(this.sunLight);
     
     // Ambient light for soft fill
     const ambientLight = new THREE.AmbientLight(0x404080, 0.5);
-    this.scene.add(ambientLight);
+    this.sceneEnv.add(ambientLight);
     
     // Hemisphere light for sky/ground color interaction
     const hemiLight = new THREE.HemisphereLight(0xffeeb1, 0x080820, 0.8);
-    this.scene.add(hemiLight);
+    this.sceneEnv.add(hemiLight);
   }
   
   async setupEnvironment() {
     // Add volumetric fog
-    this.scene.fog = new THREE.FogExp2(0xb1c4dd, 0.015);
+    this.sceneEnv.fog = new THREE.FogExp2(0xb1c4dd, 0.015);
     
     try {
       // Load HDRI environment
       const rgbeLoader = new RGBELoader();
       const texture = await rgbeLoader.loadAsync('/assets/hdri/forest_slope_1k.hdr');
       texture.mapping = THREE.EquirectangularReflectionMapping;
-      this.scene.environment = texture;
-      this.scene.background = texture;
+      this.sceneEnv.environment = texture;
+      this.sceneEnv.background = texture;
     } catch (error) {
       console.warn('HDRI not found, using fallback sky');
       // Create gradient sky
@@ -168,7 +225,7 @@ export class Scene3D {
           side: THREE.BackSide
         })
       );
-      this.scene.add(sky);
+      this.sceneEnv.add(sky);
     }
     
     // Create detailed terrain
@@ -177,8 +234,7 @@ export class Scene3D {
       new THREE.MeshStandardMaterial({
         color: 0x2D5A27,
         roughness: 0.8,
-        metalness: 0.1,
-        wireframe: false
+        metalness: 0.1
       })
     );
     
@@ -193,14 +249,13 @@ export class Scene3D {
     terrain.rotation.x = -Math.PI / 2;
     terrain.position.y = -2;
     terrain.receiveShadow = true;
-    this.scene.add(terrain);
+    this.sceneEnv.add(terrain);
     
-    // Try to add water
+    // Try to add water with reflection
     try {
       const waterGeometry = new THREE.PlaneGeometry(100, 100);
       const textureLoader = new THREE.TextureLoader();
       
-      // Load water normals texture with proper error handling
       const waterNormals = await new Promise((resolve, reject) => {
         textureLoader.load(
           '/assets/textures/waternormals.jpg',
@@ -217,57 +272,26 @@ export class Scene3D {
         textureWidth: 512,
         textureHeight: 512,
         waterNormals: waterNormals,
-        sunDirection: new THREE.Vector3(),
+        sunDirection: this.sunLight.position.clone().normalize(),
         sunColor: 0xffffff,
         waterColor: 0x001e0f,
         distortionScale: 3.7,
-        fog: this.scene.fog !== undefined
+        fog: this.sceneEnv.fog !== undefined
       });
+      
       this.water.rotation.x = -Math.PI / 2;
       this.water.position.y = -1.5;
-      this.scene.add(this.water);
+      this.sceneEnv.add(this.water);
     } catch (error) {
       console.warn('Could not load water texture, skipping water feature:', error);
     }
   }
   
-  setupTentMask() {
-    // Create tent frame geometry
-    const shape = new THREE.Shape();
-    
-    // Calculate dimensions based on screen aspect ratio
-    const width = this.container.clientWidth;
-    const height = this.container.clientHeight;
-    const aspectRatio = width / height;
-    
-    const shapeWidth = 10 * aspectRatio;
-    const shapeHeight = 10;
-    
-    // Create tent opening shape
-    shape.moveTo(-shapeWidth/2, -shapeHeight/2);
-    shape.quadraticCurveTo(0, -shapeHeight/2 - 1, shapeWidth/2, -shapeHeight/2);
-    shape.quadraticCurveTo(shapeWidth/2 + 1, 0, shapeWidth/2, shapeHeight/2);
-    shape.quadraticCurveTo(0, shapeHeight/2 + 1, -shapeWidth/2, shapeHeight/2);
-    shape.quadraticCurveTo(-shapeWidth/2 - 1, 0, -shapeWidth/2, -shapeHeight/2);
-    
-    const geometry = new THREE.ShapeGeometry(shape);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xD6A65B,
-      roughness: 0.7,
-      metalness: 0.1,
-      side: THREE.DoubleSide
-    });
-    
-    this.tentFrame = new THREE.Mesh(geometry, material);
-    this.tentFrame.position.z = -3;
-    this.scene.add(this.tentFrame);
-  }
-  
   setupCampfire() {
     // Create campfire light
     this.fireLight = new THREE.PointLight(0xff6600, 2, 10);
-    this.fireLight.position.set(0, 0, 2);
-    this.scene.add(this.fireLight);
+    this.fireLight.position.set(0, -0.5, -2);
+    this.sceneEnv.add(this.fireLight);
     
     // Create particle system for fire
     const fireGeometry = new THREE.BufferGeometry();
@@ -278,7 +302,7 @@ export class Scene3D {
     for (let i = 0; i < fireParticles * 3; i += 3) {
       positions[i] = Math.random() * 0.5 - 0.25;
       positions[i + 1] = Math.random() * 1;
-      positions[i + 2] = Math.random() * 0.5 - 0.25 + 2;
+      positions[i + 2] = Math.random() * 0.5 - 0.25 - 2;
       
       colors[i] = Math.random() * 0.5 + 0.5;
       colors[i + 1] = Math.random() * 0.3;
@@ -292,11 +316,12 @@ export class Scene3D {
       size: 0.1,
       vertexColors: true,
       transparent: true,
-      opacity: 0.8
+      opacity: 0.8,
+      depthWrite: false
     });
     
     this.fire = new THREE.Points(fireGeometry, fireMaterial);
-    this.scene.add(this.fire);
+    this.sceneEnv.add(this.fire);
   }
   
   onResize() {
@@ -309,8 +334,8 @@ export class Scene3D {
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
     
-    if (this.voxelPass) {
-      this.voxelPass.uniforms.resolution.value.set(width, height);
+    if (this.tentMaskPass) {
+      this.tentMaskPass.uniforms.uAspect.value = width / height;
     }
   }
   
@@ -319,9 +344,9 @@ export class Scene3D {
     
     const time = this.clock.getElapsedTime();
     
-    // Animate tent frame
-    if (this.tentFrame) {
-      this.tentFrame.rotation.z = Math.sin(time * 0.5) * 0.02;
+    // Update tent mask animation
+    if (this.tentMaskPass) {
+      this.tentMaskPass.uniforms.uTime.value = time;
     }
     
     // Animate water
@@ -354,7 +379,7 @@ export class Scene3D {
     window.removeEventListener('resize', this.onResize);
     
     // Dispose of Three.js resources
-    this.scene.traverse((object) => {
+    this.sceneEnv.traverse((object) => {
       if (object.isMesh) {
         object.geometry.dispose();
         if (object.material.map) object.material.map.dispose();
@@ -370,7 +395,7 @@ export class Scene3D {
     if (this.voxelPass) {
       this.voxelPass.enabled = true;
       
-      this.scene.traverse((object) => {
+      this.sceneEnv.traverse((object) => {
         if (object.isMesh) {
           if (object.material.map) {
             object.material.map.minFilter = THREE.NearestFilter;
@@ -388,7 +413,7 @@ export class Scene3D {
     if (this.voxelPass) {
       this.voxelPass.enabled = false;
       
-      this.scene.traverse((object) => {
+      this.sceneEnv.traverse((object) => {
         if (object.isMesh) {
           if (object.material.map) {
             object.material.map.minFilter = THREE.LinearMipmapLinearFilter;
