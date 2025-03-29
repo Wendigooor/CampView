@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Night City Tent View</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        
+        #game-container {
+            position: relative;
+            width: 1000px;
+            height: 600px;
+            background-color: #000;
+        }
+        
+        #tent-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 40%, rgba(214, 166, 91, 0.15) 100%);
+        }
+        
+        #city-scene {
+            position: absolute;
+            top: 100px;
+            left: 150px;
+            width: 700px;
+            height: 400px;
+            background: linear-gradient(to bottom, #0F2027, #203A43, #2C5364);
+            overflow: hidden;
+            z-index: 10;
+        }
+        
+        .building {
+            position: absolute;
+            bottom: 0;
+            background: #111;
+            border-top: 1px solid #333;
+        }
+        
+        .window {
+            position: absolute;
+            background-color: #FFD700;
+            border-radius: 1px;
+            animation: window-flicker 5s infinite;
+        }
+        
+        @keyframes window-flicker {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 0.8; }
+            20%, 22%, 24%, 55% { opacity: 0.3; }
+        }
+        
+        #event-display {
+            position: absolute;
+            top: 120px;
+            left: 170px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            max-width: 250px;
+            font-size: 14px;
+            color: white;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            border-left: 3px solid #FFD700;
+            z-index: 30;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: flex;
+            gap: 10px;
+            z-index: 30;
+        }
+        
+        button {
+            padding: 8px 15px;
+            background-color: #333;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background-color: #444;
+            transform: translateY(-2px);
+        }
+        
+        .star {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background-color: white;
+            border-radius: 50%;
+            animation: twinkle 3s infinite alternate;
+        }
+        
+        @keyframes twinkle {
+            0% { opacity: 0.2; }
+            100% { opacity: 0.8; }
+        }
+        
+        .shooting-star {
+            position: absolute;
+            width: 80px;
+            height: 2px;
+            background: linear-gradient(to right, rgba(255,255,255,0), white, rgba(255,255,255,0));
+            transform-origin: left center;
+            animation: shoot 3s linear;
+            z-index: 15;
+        }
+        
+        @keyframes shoot {
+            0% { transform: translateX(0) translateY(0) scale(1); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateX(600px) translateY(150px) scale(0.3); opacity: 0; }
+        }
+        
+        #tent-frame {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 25;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <!-- Night city scene -->
+        <div id="city-scene">
+            <!-- Buildings and windows will be added here by JavaScript -->
+        </div>
+        
+        <!-- Tent frame overlay -->
+        <svg id="tent-frame" viewBox="0 0 1000 600" xmlns="http://www.w3.org/2000/svg">
+            <path d="M0,0 H1000 V600 H0 Z 
+                     M150,100 
+                     Q500,0 850,100 
+                     Q950,200 950,400 
+                     Q500,550 50,400 
+                     Q50,200 150,100 Z"
+                  fill="none" stroke="#D6A65B" stroke-width="3" stroke-opacity="0.8"/>
+        </svg>
+        
+        <!-- Tent light overlay -->
+        <div id="tent-overlay"></div>
+        
+        <!-- Event display -->
+        <div id="event-display"></div>
+        
+        <!-- Controls -->
+        <div id="controls">
+            <button id="shooting-star-btn">Shooting Star</button>
+            <button id="ufo-btn">UFO</button>
+        </div>
+    </div>
+
+    <script>
+        // Initialize scene
+        const scene = document.getElementById('city-scene');
+        const sceneWidth = 700;
+        const sceneHeight = 400;
+        
+        // Create night sky with stars
+        function createStars() {
+            for (let i = 0; i < 150; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = `${Math.random() * sceneWidth}px`;
+                star.style.top = `${Math.random() * 200}px`;
+                star.style.opacity = 0.2 + Math.random() * 0.6;
+                star.style.animationDelay = `${Math.random() * 3}s`;
+                star.style.width = `${1 + Math.random() * 2}px`;
+                star.style.height = star.style.width;
+                scene.appendChild(star);
+            }
+        }
+        
+        // Create city buildings with flickering windows
+        function createCity() {
+            const buildingCount = 15;
+            const buildingWidth = 50;
+            const minHeight = 100;
+            const maxHeight = 280;
+            
+            for (let i = 0; i < buildingCount; i++) {
+                const building = document.createElement('div');
+                building.className = 'building';
+                
+                const height = minHeight + Math.random() * (maxHeight - minHeight);
+                const left = 30 + i * (sceneWidth - 60) / buildingCount;
+                const width = buildingWidth * (0.6 + Math.random() * 0.8);
+                
+                building.style.left = `${left}px`;
+                building.style.width = `${width}px`;
+                building.style.height = `${height}px`;
+                
+                // Add windows with flickering effect
+                const windowRows = Math.floor(height / 25);
+                const windowCols = Math.floor(width / 12);
+                
+                for (let row = 0; row < windowRows; row++) {
+                    for (let col = 0; col < windowCols; col++) {
+                        if (Math.random() > 0.4) { // Only some windows are lit
+                            const window = document.createElement('div');
+                            window.className = 'window';
+                            window.style.left = `${5 + col * 12}px`;
+                            window.style.top = `${10 + row * 25}px`;
+                            window.style.width = `${4 + Math.random() * 4}px`;
+                            window.style.height = `${4 + Math.random() * 4}px`;
+                            window.style.animationDelay = `${Math.random() * 5}s`;
+                            
+                            // Random color variation
+                            if (Math.random() > 0.7) {
+                                window.style.backgroundColor = `hsl(${40 + Math.random() * 20}, 100%, ${50 + Math.random() * 20}%)`;
+                            }
+                            
+                            building.appendChild(window);
+                        }
+                    }
+                }
+                
+                scene.appendChild(building);
+            }
+        }
+        
+        // Create a shooting star
+        function createShootingStar() {
+            const star = document.createElement('div');
+            star.className = 'shooting-star';
+            star.style.left = `${-50 + Math.random() * 100}px`;
+            star.style.top = `${30 + Math.random() * 100}px`;
+            star.style.transform = `rotate(${-20 + Math.random() * 40}deg)`;
+            scene.appendChild(star);
+            
+            setTimeout(() => {
+                if (star.parentNode) scene.removeChild(star);
+            }, 3000);
+            
+            showEvent("Shooting star!");
+        }
+        
+        // Create UFO
+        function createUFO() {
+            const ufo = document.createElement('div');
+            ufo.style.position = 'absolute';
+            ufo.style.left = '-100px';
+            ufo.style.top = `${50 + Math.random() * 100}px`;
+            ufo.style.width = '80px';
+            ufo.style.height = '20px';
+            ufo.style.borderRadius = '50%';
+            ufo.style.zIndex = '15';
+            
+            // UFO body with gradient
+            ufo.style.background = 'radial-gradient(ellipse at center, #AAA 0%, #666 100%)';
+            ufo.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.7)';
+            
+            // UFO light
+            const light = document.createElement('div');
+            light.style.position = 'absolute';
+            light.style.width = '100%';
+            light.style.height = '4px';
+            light.style.backgroundColor = 'rgba(0, 255, 255, 0.7)';
+            light.style.bottom = '0';
+            light.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.7)';
+            light.style.borderRadius = '50%';
+            light.style.animation = 'pulse 1s infinite alternate';
+            ufo.appendChild(light);
+            
+            scene.appendChild(ufo);
+            
+            // Animate UFO
+            let pos = -100;
+            const id = setInterval(() => {
+                pos += 3;
+                ufo.style.left = `${pos}px`;
+                
+                if (pos > sceneWidth + 100) {
+                    clearInterval(id);
+                    if (ufo.parentNode) scene.removeChild(ufo);
+                }
+            }, 20);
+            
+            showEvent("UFO spotted!");
+        }
+        
+        // Show event message
+        function showEvent(message) {
+            const eventDisplay = document.getElementById('event-display');
+            eventDisplay.textContent = message;
+            eventDisplay.style.opacity = '1';
+            
+            setTimeout(() => {
+                eventDisplay.style.opacity = '0';
+            }, 3000);
+        }
+        
+        // Initialize event listeners
+        document.getElementById('shooting-star-btn').addEventListener('click', createShootingStar);
+        document.getElementById('ufo-btn').addEventListener('click', createUFO);
+        
+        // Initialize scene
+        createStars();
+        createCity();
+        
+        // Random shooting stars
+        setInterval(() => {
+            if (Math.random() > 0.85) {
+                createShootingStar();
+            }
+        }, 8000);
+        
+        // Random UFO appearances
+        setInterval(() => {
+            if (Math.random() > 0.95) {
+                createUFO();
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
